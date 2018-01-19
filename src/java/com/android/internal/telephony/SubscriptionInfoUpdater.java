@@ -284,7 +284,7 @@ public class SubscriptionInfoUpdater extends Handler {
                 break;
 
             case EVENT_SIM_IO_ERROR:
-                handleSimError(msg.arg1);
+                handleSimAbsentOrError(msg.arg1, IccCardConstants.INTENT_VALUE_ICC_CARD_IO_ERROR);
                 break;
 
             case EVENT_SIM_RESTRICTED:
@@ -621,7 +621,7 @@ public class SubscriptionInfoUpdater extends Handler {
         updateCarrierServices(slotId, IccCardConstants.INTENT_VALUE_ICC_CARD_IO_ERROR);
     }
 
-    synchronized protected void updateSubscriptionInfoByIccId(int slotIndex,
+    protected synchronized void updateSubscriptionInfoByIccId(int slotIndex,
             boolean updateEmbeddedSubs) {
         logd("updateSubscriptionInfoByIccId:+ Start");
         if (!SubscriptionManager.isValidSlotIndex(slotIndex)) {

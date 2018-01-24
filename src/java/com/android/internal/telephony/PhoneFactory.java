@@ -165,8 +165,8 @@ public class PhoneFactory {
                     networkModes[i] = RILConstants.PREFERRED_NETWORK_MODE;
 
                     Rlog.i(LOG_TAG, "Network Mode set to " + Integer.toString(networkModes[i]));
-                    sCommandsInterfaces[i] = telephonyComponentFactory.inject(RIL.class.getName()).
-                            makeRIL(context, networkModes[i], cdmaSubscription, i);
+                    sCommandsInterfaces[i] = telephonyComponentFactory.makeRIL(context,
+                            networkModes[i], cdmaSubscription, i);
                 }
 
                 // Instantiate UiccController so that all other classes can just
@@ -174,11 +174,8 @@ public class PhoneFactory {
                 sUiccController = UiccController.make(context, sCommandsInterfaces);
 
                 Rlog.i(LOG_TAG, "Creating SubscriptionController");
-                telephonyComponentFactory.inject(SubscriptionController.class.
-                                getName()).initSubscriptionController(context, sCommandsInterfaces);
-                telephonyComponentFactory.inject(MultiSimSettingController.class.
-                                getName()).initMultiSimSettingController(context,
-                                SubscriptionController.getInstance());
+                telephonyComponentFactory.initSubscriptionController(context, sCommandsInterfaces);
+                MultiSimSettingController.init(context, SubscriptionController.getInstance());
 
                 if (context.getPackageManager().hasSystemFeature(
                         PackageManager.FEATURE_TELEPHONY_EUICC)) {
@@ -192,15 +189,15 @@ public class PhoneFactory {
                     TelephonyComponentFactory injectedComponentFactory =
                             telephonyComponentFactory.inject(GsmCdmaPhone.class.getName());
                     if (phoneType == PhoneConstants.PHONE_TYPE_GSM) {
-                        phone = injectedComponentFactory.makePhone(context,
+                        phone = telephonyComponentFactory.makePhone(context,
                                 sCommandsInterfaces[i], sPhoneNotifier, i,
                                 PhoneConstants.PHONE_TYPE_GSM,
-                                TelephonyComponentFactory.getInstance());
+                                telephonyComponentFactory);
                     } else if (phoneType == PhoneConstants.PHONE_TYPE_CDMA) {
-                        phone = injectedComponentFactory.makePhone(context,
+                        phone = telephonyComponentFactory.makePhone(context,
                                 sCommandsInterfaces[i], sPhoneNotifier, i,
                                 PhoneConstants.PHONE_TYPE_CDMA_LTE,
-                                TelephonyComponentFactory.getInstance());
+                                telephonyComponentFactory);
                     }
                     Rlog.i(LOG_TAG, "Creating Phone with type = " + phoneType + " sub = " + i);
 
@@ -231,10 +228,8 @@ public class PhoneFactory {
                 sMadeDefaults = true;
 
                 Rlog.i(LOG_TAG, "Creating SubInfoRecordUpdater ");
-                sSubInfoRecordUpdater = telephonyComponentFactory.inject(
-                        SubscriptionInfoUpdater.class.getName()).
-                        makeSubscriptionInfoUpdater(BackgroundThread.get().
-                        getLooper(), context, sPhones, sCommandsInterfaces);
+                sSubInfoRecordUpdater = telephonyComponentFactory.makeSubscriptionInfoUpdater(
+                        BackgroundThread.get().getLooper(), context, sPhones, sCommandsInterfaces);
                 SubscriptionController.getInstance().updatePhonesAvailability(sPhones);
 
 
@@ -277,7 +272,7 @@ public class PhoneFactory {
                 int maxActivePhones = sPhoneConfigurationManager
                         .getNumberOfModemsWithSimultaneousDataConnections();
 
-                sPhoneSwitcher = telephonyComponentFactory.inject(PhoneSwitcher.class.getName()).
+                sPhoneSwitcher = telephonyComponentFactory.
                         makePhoneSwitcher(maxActivePhones, numPhones,
                         sContext, sc, Looper.myLooper(), tr, sCommandsInterfaces,
                         sPhones);
@@ -293,8 +288,8 @@ public class PhoneFactory {
                     sTelephonyNetworkFactories[i] = new TelephonyNetworkFactory(
                             sSubscriptionMonitor, Looper.myLooper(), sPhones[i], sPhoneSwitcher);
                 }
-                telephonyComponentFactory.inject(TelephonyComponentFactory.class.getName()).
-                        makeExtTelephonyClasses(context, sPhones, sCommandsInterfaces);
+                telephonyComponentFactory.makeExtTelephonyClasses(
+                        context, sPhones, sCommandsInterfaces);
             }
         }
     }

@@ -4305,7 +4305,7 @@ public class DcTracker extends Handler {
         }
     }
 
-    private void log(String s) {
+    protected void log(String s) {
         Rlog.d(mLogTag, s);
     }
 

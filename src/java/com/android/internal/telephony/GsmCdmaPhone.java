@@ -3725,10 +3725,6 @@ public class GsmCdmaPhone extends Phone {
         return country.toUpperCase();
     }
 
-    public void notifyEcbmTimerReset(Boolean flag) {
-        mEcmTimerResetRegistrants.notifyResult(flag);
-    }
-
     private static final int[] VOICE_PS_CALL_RADIO_TECHNOLOGY = {
             ServiceState.RIL_RADIO_TECHNOLOGY_LTE,
             ServiceState.RIL_RADIO_TECHNOLOGY_LTE_CA,

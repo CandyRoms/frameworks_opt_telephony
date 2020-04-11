@@ -48,8 +48,6 @@ public class AdnRecord implements Parcelable {
     String[] mEmails;
     String[] mAdditionalNumbers = null;
     @UnsupportedAppUsage
-    String[] mAdditionalNumbers = null;
-    @UnsupportedAppUsage
     int mExtRecord = 0xff;
     @UnsupportedAppUsage
     int mEfid;                   // or 0 if none
@@ -130,10 +128,6 @@ public class AdnRecord implements Parcelable {
     @UnsupportedAppUsage
     public AdnRecord (String alphaTag, String number, String[] emails) {
         this(0, 0, alphaTag, number, emails);
-    }
-
-    public AdnRecord(String alphaTag, String number, String[] emails, String[] additionalNumbers) {
-        this(0, 0, alphaTag, number, emails, additionalNumbers);
     }
 
     @UnsupportedAppUsage

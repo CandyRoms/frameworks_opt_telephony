@@ -564,7 +564,6 @@ public class IccProvider extends ContentProvider {
                 contact[2] = emailString.toString();
             }
 
-            String[] anrs = record.getAdditionalNumbers();
             if (anrs != null) {
                 StringBuilder anrString = new StringBuilder();
                 for (String anr : anrs) {

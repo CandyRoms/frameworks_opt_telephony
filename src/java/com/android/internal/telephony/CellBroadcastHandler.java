@@ -301,9 +301,9 @@ public class CellBroadcastHandler extends WakeLockStateMachine {
 
         /**
          * Use as the default maximum wait time if the cell broadcast doesn't specify the value.
-         * Most of the location request should be responded within 20 seconds.
+         * Most of the location request should be responded within 30 seconds.
          */
-        private static final int DEFAULT_MAXIMUM_WAIT_TIME_SEC = 20;
+        private static final int DEFAULT_MAXIMUM_WAIT_TIME_SEC = 30;
 
         /**
          * Trigger this event when the {@link LocationManager} is not responded within the given
@@ -355,6 +355,14 @@ public class CellBroadcastHandler extends WakeLockStateMachine {
                 callback.onLocationUpdate(location);
             }
             mCallbacks.clear();
+<<<<<<< HEAD
+=======
+
+            for (LocationListener listener : mLocationListenerList) {
+                mLocationManager.removeUpdates(listener);
+            }
+            mLocationListenerList.clear();
+>>>>>>> c10-tele
         }
 
         private void requestLocationUpdateInternal(@NonNull LocationUpdateCallback callback,
@@ -381,8 +389,32 @@ public class CellBroadcastHandler extends WakeLockStateMachine {
 
             for (String provider : LOCATION_PROVIDERS) {
                 if (mLocationManager.isProviderEnabled(provider)) {
+<<<<<<< HEAD
                     mLocationManager.requestSingleUpdate(provider, mLocationListener, mLooper);
                     break;
+=======
+                    LocationListener listener = new LocationListener() {
+                        @Override
+                        public void onLocationChanged(Location location) {
+                            mLocationListenerList.remove(this);
+                            mLocationHandler.removeMessages(EVENT_LOCATION_REQUEST_TIMEOUT);
+                            onLocationUpdate(new LatLng(location.getLatitude(),
+                                    location.getLongitude()));
+                        }
+
+                        @Override
+                        public void onStatusChanged(String provider, int status, Bundle extras) {}
+
+                        @Override
+                        public void onProviderEnabled(String provider) {}
+
+                        @Override
+                        public void onProviderDisabled(String provider) {}
+                    };
+                    mLocationListenerList.add(listener);
+                    Log.d(TAG, "Request location single update from " + provider);
+                    mLocationManager.requestSingleUpdate(provider, listener, mLooper);
+>>>>>>> c10-tele
                 }
             }
         }
@@ -401,6 +433,7 @@ public class CellBroadcastHandler extends WakeLockStateMachine {
                     permission) == PERMISSION_GRANTED;
         }
 
+<<<<<<< HEAD
         private final LocationListener mLocationListener = new LocationListener() {
             @Override
             public void onLocationChanged(Location location) {
@@ -417,6 +450,9 @@ public class CellBroadcastHandler extends WakeLockStateMachine {
             @Override
             public void onProviderDisabled(String provider) {}
         };
+=======
+        private final List<LocationListener> mLocationListenerList = new ArrayList<>();
+>>>>>>> c10-tele
 
         private final class LocationHandler extends Handler {
             LocationHandler(Looper looper) {

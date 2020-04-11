@@ -46,6 +46,7 @@ public class AdnRecord implements Parcelable {
     String mNumber = null;
     @UnsupportedAppUsage
     String[] mEmails;
+    String[] mAdditionalNumbers = null;
     @UnsupportedAppUsage
     String[] mAdditionalNumbers = null;
     @UnsupportedAppUsage
@@ -131,6 +132,10 @@ public class AdnRecord implements Parcelable {
         this(0, 0, alphaTag, number, emails);
     }
 
+    public AdnRecord(String alphaTag, String number, String[] emails, String[] additionalNumbers) {
+        this(0, 0, alphaTag, number, emails, additionalNumbers);
+    }
+
     @UnsupportedAppUsage
     public AdnRecord(String alphaTag, String number, String[] emails, String[] additionalNumbers) {
         this(0, 0, alphaTag, number, emails, additionalNumbers);
@@ -146,7 +151,6 @@ public class AdnRecord implements Parcelable {
         this.mAdditionalNumbers = null;
     }
 
-    @UnsupportedAppUsage
     public AdnRecord(int efid, int recordNumber, String alphaTag, String number, String[] emails,
             String[] additionalNumbers) {
         this.mEfid = efid;
@@ -200,12 +204,10 @@ public class AdnRecord implements Parcelable {
         this.mEmails = emails;
     }
 
-    @UnsupportedAppUsage
     public String[] getAdditionalNumbers() {
         return mAdditionalNumbers;
     }
 
-    @UnsupportedAppUsage
     public void setAdditionalNumbers(String[] additionalNumbers) {
         this.mAdditionalNumbers = additionalNumbers;
     }
@@ -256,11 +258,13 @@ public class AdnRecord implements Parcelable {
         }
 
         if (s1 == null) {
-            s1 = new String []{""};
+            s1 = new String[1];
+            s1[0] = "";
         }
 
         if (s2 == null) {
-            s2 = new String []{""};
+            s2 = new String[1];
+            s2[0] = "";
         }
 
         for (String str:s1) {
@@ -345,14 +349,14 @@ public class AdnRecord implements Parcelable {
             return null;
         }
 
-        byteTag = !TextUtils.isEmpty(mAlphaTag) ? GsmAlphabet.stringToGsm8BitPacked(mAlphaTag)
+        byteTag = !TextUtils.isEmpty(mAlphaTag) ? IccUtils.stringToAdnStringField(mAlphaTag)
                 : new byte[0];
 
         if (byteTag.length > footerOffset) {
             Rlog.w(LOG_TAG, "[buildAdnString] Max length of tag is " + footerOffset);
             return null;
         } else {
-            if (!TextUtils.isEmpty(mNumber)) {
+            if (!(TextUtils.isEmpty(mNumber))) {
                 bcdNumber = PhoneNumberUtils.numberToCalledPartyBCD(
                         mNumber, PhoneNumberUtils.BCD_EXTENDED_TYPE_EF_ADN);
 

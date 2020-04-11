@@ -34,7 +34,9 @@ import static com.android.internal.telephony.CommandsInterface.CF_REASON_BUSY;
 import static com.android.internal.telephony.CommandsInterface.CF_REASON_NOT_REACHABLE;
 import static com.android.internal.telephony.CommandsInterface.CF_REASON_NO_REPLY;
 import static com.android.internal.telephony.CommandsInterface.CF_REASON_UNCONDITIONAL;
+import static com.android.internal.telephony.CommandsInterface.SERVICE_CLASS_DATA_SYNC;
 import static com.android.internal.telephony.CommandsInterface.SERVICE_CLASS_NONE;
+import static com.android.internal.telephony.CommandsInterface.SERVICE_CLASS_PACKET;
 import static com.android.internal.telephony.CommandsInterface.SERVICE_CLASS_VOICE;
 
 import android.annotation.UnsupportedAppUsage;
@@ -91,6 +93,7 @@ import com.android.internal.telephony.CallTracker;
 import com.android.internal.telephony.CommandException;
 import com.android.internal.telephony.CommandsInterface;
 import com.android.internal.telephony.Connection;
+import com.android.internal.telephony.EcbmHandler;
 import com.android.internal.telephony.GsmCdmaPhone;
 import com.android.internal.telephony.MmiCode;
 import com.android.internal.telephony.Phone;
@@ -131,9 +134,6 @@ public class ImsPhone extends ImsPhoneBase {
     @VisibleForTesting
     public static final int EVENT_SERVICE_STATE_CHANGED             = EVENT_LAST + 8;
     private static final int EVENT_VOICE_CALL_ENDED                  = EVENT_LAST + 9;
-
-    static final int RESTART_ECM_TIMER = 0; // restart Ecm timer
-    static final int CANCEL_ECM_TIMER  = 1; // cancel Ecm timer
 
     // Default Emergency Callback Mode exit timer
     private static final int DEFAULT_ECM_EXIT_TIMER_VALUE = 300000;
@@ -206,10 +206,6 @@ public class ImsPhone extends ImsPhoneBase {
 
     private WakeLock mWakeLock;
 
-    // mEcmExitRespRegistrant is informed after the phone has been exited the emergency
-    // callback mode keep track of if phone is in emergency callback mode
-    private Registrant mEcmExitRespRegistrant;
-
     private final RegistrantList mSilentRedialRegistrants = new RegistrantList();
 
     private boolean mImsRegistered = false;
@@ -218,14 +214,6 @@ public class ImsPhone extends ImsPhoneBase {
 
     // List of Registrants to send supplementary service notifications to.
     private RegistrantList mSsnRegistrants = new RegistrantList();
-
-    // A runnable which is used to automatically exit from Ecm after a period of time.
-    private Runnable mExitEcmRunnable = new Runnable() {
-        @Override
-        public void run() {
-            exitEmergencyCallbackMode();
-        }
-    };
 
     private Uri[] mCurrentSubscriberUris;
 
@@ -256,12 +244,14 @@ public class ImsPhone extends ImsPhoneBase {
         final String mSetCfNumber;
         final Message mOnComplete;
         final boolean mIsCfu;
+        final int mServiceClass;
 
         @UnsupportedAppUsage
-        Cf(String cfNumber, boolean isCfu, Message onComplete) {
+        Cf(String cfNumber, boolean isCfu, Message onComplete, int serviceClass) {
             mSetCfNumber = cfNumber;
             mIsCfu = isCfu;
             mOnComplete = onComplete;
+            mServiceClass = serviceClass;
         }
     }
 
@@ -373,6 +363,13 @@ public class ImsPhone extends ImsPhoneBase {
     @Override
     public CallTracker getCallTracker() {
         return mCT;
+    }
+
+    public void setVoiceCallForwardingFlag(int line, boolean enable, String number) {
+        IccRecords r = mDefaultPhone.getIccRecords();
+        if (r != null) {
+            setVoiceCallForwardingFlag(r, line, enable, number);
+        }
     }
 
     public ImsExternalCallTracker getExternalCallTracker() {
@@ -696,16 +693,6 @@ public class ImsPhone extends ImsPhoneBase {
                ringingCallState.isAlive());
     }
 
-    @Override
-    public boolean isInEcm() {
-        return mDefaultPhone.isInEcm();
-    }
-
-    @Override
-    public void setIsInEcm(boolean isInEcm){
-        mDefaultPhone.setIsInEcm(isInEcm);
-    }
-
     public void notifyNewRingingConnection(Connection c) {
         mDefaultPhone.notifyNewRingingConnectionP(c);
     }
@@ -734,9 +721,19 @@ public class ImsPhone extends ImsPhoneBase {
     private Connection dialInternal(String dialString, DialArgs dialArgs,
                                     ResultReceiver wrappedCallback)
             throws CallStateException {
-
-        // Need to make sure dialString gets parsed properly
-        String newDialString = PhoneNumberUtils.stripSeparators(dialString);
+        boolean isConferenceUri = false;
+        boolean isSkipSchemaParsing = false;
+        if (dialArgs.intentExtras != null) {
+            isConferenceUri = dialArgs.intentExtras.getBoolean(
+                    TelephonyProperties.EXTRA_DIAL_CONFERENCE_URI, false);
+            isSkipSchemaParsing = dialArgs.intentExtras.getBoolean(
+                    TelephonyProperties.EXTRA_SKIP_SCHEMA_PARSING, false);
+        }
+        String newDialString = dialString;
+        // Need to make sure dialString gets parsed properly.
+        if (!isConferenceUri && !isSkipSchemaParsing) {
+            newDialString = PhoneNumberUtils.stripSeparators(dialString);
+        }
 
         // handle in-call MMI first if applicable
         if (handleInCallMmiCommands(newDialString)) {
@@ -793,6 +790,11 @@ public class ImsPhone extends ImsPhoneBase {
 
             return null;
         }
+    }
+
+    @Override
+    public void addParticipant(String dialString) throws CallStateException {
+        mCT.addParticipant(dialString);
     }
 
     @Override
@@ -967,15 +969,24 @@ public class ImsPhone extends ImsPhoneBase {
     @Override
     public void getCallForwardingOption(int commandInterfaceCFReason,
             Message onComplete) {
-        if (DBG) logd("getCallForwardingOption reason=" + commandInterfaceCFReason);
+        getCallForwardingOption(commandInterfaceCFReason,
+            SERVICE_CLASS_VOICE, onComplete);
+    }
+
+    @Override
+    public void getCallForwardingOption(int commandInterfaceCFReason,
+            int commandInterfaceServiceClass, Message onComplete) {
+        if (DBG) Rlog.d(LOG_TAG, "getCallForwardingOption reason=" + commandInterfaceCFReason +
+                "serviceclass =" + commandInterfaceServiceClass);
         if (isValidCommandInterfaceCFReason(commandInterfaceCFReason)) {
-            if (DBG) logd("requesting call forwarding query.");
+            if (DBG) Rlog.d(LOG_TAG, "requesting call forwarding query.");
             Message resp;
             resp = obtainMessage(EVENT_GET_CALL_FORWARD_DONE, onComplete);
 
             try {
                 ImsUtInterface ut = mCT.getUtInterface();
-                ut.queryCallForward(getConditionFromCFReason(commandInterfaceCFReason), null, resp);
+                ut.queryCallForward(getConditionFromCFReason(commandInterfaceCFReason), null,
+                        commandInterfaceServiceClass, resp);
             } catch (ImsException e) {
                 sendErrorResponse(onComplete, e);
             }
@@ -1009,7 +1020,7 @@ public class ImsPhone extends ImsPhoneBase {
                 (isValidCommandInterfaceCFReason(commandInterfaceCFReason))) {
             Message resp;
             Cf cf = new Cf(dialingNumber, GsmMmiCode.isVoiceUnconditionalForwarding(
-                    commandInterfaceCFReason, serviceClass), onComplete);
+                    commandInterfaceCFReason, serviceClass), onComplete, serviceClass);
             resp = obtainMessage(EVENT_SET_CALL_FORWARD_DONE,
                     isCfEnable(commandInterfaceCFAction) ? 1 : 0, 0, cf);
 
@@ -1389,10 +1400,19 @@ public class ImsPhone extends ImsPhoneBase {
         CallForwardInfo cfInfo = new CallForwardInfo();
         cfInfo.status = info.getStatus();
         cfInfo.reason = getCFReasonFromCondition(info.getCondition());
-        cfInfo.serviceClass = SERVICE_CLASS_VOICE;
         cfInfo.toa = info.getToA();
         cfInfo.number = info.getNumber();
         cfInfo.timeSeconds = info.getTimeSeconds();
+        //Check if the service class signifies Video call forward
+        //As per 3GPP TS 29002 MAP Specification : Section 17.7.10, the BearerServiceCode for
+        //"allDataCircuitAsynchronous" is '01010000' ( i.e. 80).
+        //Hence, SERVICE_CLASS_DATA_SYNC (1<<4) and SERVICE_CLASS_PACKET (1<<6)
+        //together make video service class.
+        if(info.mServiceClass == (SERVICE_CLASS_DATA_SYNC + SERVICE_CLASS_PACKET)) {
+            cfInfo.serviceClass = info.getServiceClass();
+        } else {
+            cfInfo.serviceClass = SERVICE_CLASS_VOICE;
+        }
         return cfInfo;
     }
 
@@ -1417,7 +1437,12 @@ public class ImsPhone extends ImsPhoneBase {
         } else {
             for (int i = 0, s = infos.length; i < s; i++) {
                 if (infos[i].getCondition() == ImsUtInterface.CDIV_CF_UNCONDITIONAL) {
-                    if (r != null) {
+                    //Check if the service class signifies Video call forward
+                    if (infos[i].mServiceClass == (SERVICE_CLASS_DATA_SYNC +
+                                SERVICE_CLASS_PACKET)) {
+                        setVideoCallForwardingPreference(infos[i].getStatus() == 1);
+                        notifyCallForwardingIndicator();
+                    } else if (r != null) {
                         setVoiceCallForwardingFlag(r, 1, (infos[i].getStatus() == 1),
                                 infos[i].getNumber());
                     }
@@ -1489,8 +1514,13 @@ public class ImsPhone extends ImsPhoneBase {
             case EVENT_SET_CALL_FORWARD_DONE:
                 IccRecords r = mDefaultPhone.getIccRecords();
                 Cf cf = (Cf) ar.userObj;
-                if (cf.mIsCfu && ar.exception == null && r != null) {
-                    setVoiceCallForwardingFlag(r, 1, msg.arg1 == 1, cf.mSetCfNumber);
+                if (cf.mIsCfu && ar.exception == null) {
+                    if (cf.mServiceClass == (SERVICE_CLASS_DATA_SYNC + SERVICE_CLASS_PACKET)) {
+                        setVideoCallForwardingPreference(msg.arg1 == 1);
+                        notifyCallForwardingIndicator();
+                    } else if (r != null && cf.mServiceClass == SERVICE_CLASS_VOICE) {
+                        setVoiceCallForwardingFlag(r, 1, msg.arg1 == 1, cf.mSetCfNumber);
+                    }
                 }
                 sendResponse(cf.mOnComplete, null, ar.exception);
                 break;
@@ -1563,137 +1593,23 @@ public class ImsPhone extends ImsPhoneBase {
         }
     }
 
-    /**
-     * Listen to the IMS ECBM state change
-     */
-    private ImsEcbmStateListener mImsEcbmStateListener =
-            new ImsEcbmStateListener() {
-                @Override
-                public void onECBMEntered() {
-                    if (DBG) logd("onECBMEntered");
-                    handleEnterEmergencyCallbackMode();
-                }
-
-                @Override
-                public void onECBMExited() {
-                    if (DBG) logd("onECBMExited");
-                    handleExitEmergencyCallbackMode();
-                }
-            };
-
-    @VisibleForTesting
-    public ImsEcbmStateListener getImsEcbmStateListener() {
-        return mImsEcbmStateListener;
-    }
-
     @Override
     public boolean isInEmergencyCall() {
         return mCT.isInEmergencyCall();
     }
 
-    private void sendEmergencyCallbackModeChange() {
-        // Send an Intent
-        Intent intent = new Intent(TelephonyIntents.ACTION_EMERGENCY_CALLBACK_MODE_CHANGED);
-        intent.putExtra(PhoneConstants.PHONE_IN_ECM_STATE, isInEcm());
-        SubscriptionManager.putPhoneIdAndSubIdExtra(intent, getPhoneId());
-        ActivityManager.broadcastStickyIntent(intent, UserHandle.USER_ALL);
-        if (DBG) logd("sendEmergencyCallbackModeChange: isInEcm=" + isInEcm());
-    }
-
-    @Override
-    public void exitEmergencyCallbackMode() {
-        if (mWakeLock.isHeld()) {
-            mWakeLock.release();
-        }
-        if (DBG) logd("exitEmergencyCallbackMode()");
-
-        // Send a message which will invoke handleExitEmergencyCallbackMode
-        ImsEcbm ecbm;
-        try {
-            ecbm = mCT.getEcbmInterface();
-            ecbm.exitEmergencyCallbackMode();
-        } catch (ImsException e) {
-            e.printStackTrace();
-        }
-    }
-
     @UnsupportedAppUsage
     private void handleEnterEmergencyCallbackMode() {
-        if (DBG) logd("handleEnterEmergencyCallbackMode,mIsPhoneInEcmState= " + isInEcm());
-        // if phone is not in Ecm mode, and it's changed to Ecm mode
-        if (!isInEcm()) {
-            setIsInEcm(true);
-            // notify change
-            sendEmergencyCallbackModeChange();
-            ((GsmCdmaPhone) mDefaultPhone).notifyEmergencyCallRegistrants(true);
-
-            // Post this runnable so we will automatically exit
-            // if no one invokes exitEmergencyCallbackMode() directly.
-            long delayInMillis = SystemProperties.getLong(
-                    TelephonyProperties.PROPERTY_ECM_EXIT_TIMER, DEFAULT_ECM_EXIT_TIMER_VALUE);
-            postDelayed(mExitEcmRunnable, delayInMillis);
-            // We don't want to go to sleep while in Ecm
-            mWakeLock.acquire();
-        }
     }
 
     @UnsupportedAppUsage
     @Override
     protected void handleExitEmergencyCallbackMode() {
-        if (DBG) logd("handleExitEmergencyCallbackMode: mIsPhoneInEcmState = " + isInEcm());
-
-        if (isInEcm()) {
-            setIsInEcm(false);
-        }
-
-        // Remove pending exit Ecm runnable, if any
-        removeCallbacks(mExitEcmRunnable);
-
-        if (mEcmExitRespRegistrant != null) {
-            mEcmExitRespRegistrant.notifyResult(Boolean.TRUE);
-        }
-
-        // release wakeLock
-        if (mWakeLock.isHeld()) {
-            mWakeLock.release();
-        }
-
-        // send an Intent
-        sendEmergencyCallbackModeChange();
-        ((GsmCdmaPhone) mDefaultPhone).notifyEmergencyCallRegistrants(false);
-    }
-
-    /**
-     * Handle to cancel or restart Ecm timer in emergency call back mode if action is
-     * CANCEL_ECM_TIMER, cancel Ecm timer and notify apps the timer is canceled; otherwise, restart
-     * Ecm timer and notify apps the timer is restarted.
-     */
-    void handleTimerInEmergencyCallbackMode(int action) {
-        switch (action) {
-            case CANCEL_ECM_TIMER:
-                removeCallbacks(mExitEcmRunnable);
-                ((GsmCdmaPhone) mDefaultPhone).notifyEcbmTimerReset(Boolean.TRUE);
-                break;
-            case RESTART_ECM_TIMER:
-                long delayInMillis = SystemProperties.getLong(
-                        TelephonyProperties.PROPERTY_ECM_EXIT_TIMER, DEFAULT_ECM_EXIT_TIMER_VALUE);
-                postDelayed(mExitEcmRunnable, delayInMillis);
-                ((GsmCdmaPhone) mDefaultPhone).notifyEcbmTimerReset(Boolean.FALSE);
-                break;
-            default:
-                loge("handleTimerInEmergencyCallbackMode, unsupported action " + action);
-        }
     }
 
     @UnsupportedAppUsage
     @Override
     public void setOnEcbModeExitResponse(Handler h, int what, Object obj) {
-        mEcmExitRespRegistrant = new Registrant(h, what, obj);
-    }
-
-    @Override
-    public void unsetOnEcbModeExitResponse(Handler h) {
-        mEcmExitRespRegistrant.clear();
     }
 
     public void onFeatureCapabilityChanged() {
@@ -1915,6 +1831,11 @@ public class ImsPhone extends ImsPhoneBase {
     @Override
     public void setBroadcastEmergencyCallStateChanges(boolean broadcast) {
         mDefaultPhone.setBroadcastEmergencyCallStateChanges(broadcast);
+    }
+
+    @Override
+    public void notifyCallForwardingIndicator() {
+        mDefaultPhone.notifyCallForwardingIndicator();
     }
 
     @VisibleForTesting
@@ -2189,8 +2110,7 @@ public class ImsPhone extends ImsPhoneBase {
         pw.println("  mPostDialHandler = " + mPostDialHandler);
         pw.println("  mSS = " + mSS);
         pw.println("  mWakeLock = " + mWakeLock);
-        pw.println("  mIsPhoneInEcmState = " + isInEcm());
-        pw.println("  mEcmExitRespRegistrant = " + mEcmExitRespRegistrant);
+        pw.println("  mIsPhoneInEcmState = " + EcbmHandler.getInstance().isInEcm());
         pw.println("  mSilentRedialRegistrants = " + mSilentRedialRegistrants);
         pw.println("  mImsRegistered = " + mImsRegistered);
         pw.println("  mRoaming = " + mRoaming);

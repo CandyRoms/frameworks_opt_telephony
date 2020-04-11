@@ -136,17 +136,17 @@ public class IccPhoneBookInterfaceManagerTest extends TelephonyTest {
             anyString(), (Message) anyObject());
 
         ContentValues values = new ContentValues();
-        values.put(IccProvider.STR_TAG, "");
-        values.put(IccProvider.STR_NUMBER, "");
-        values.put(IccProvider.STR_EMAILS, "");
-        values.put(IccProvider.STR_ANRS, "");
-        values.put(IccProvider.STR_NEW_TAG, "test");
-        values.put(IccProvider.STR_NEW_NUMBER, "123456");
-        values.put(IccProvider.STR_NEW_EMAILS, "");
-        values.put(IccProvider.STR_NEW_ANRS, "");
+        values.put("tag", "");
+        values.put("number", "");
+        values.put("emails", "");
+        values.put("anrs", "");
+        values.put("newTag", "test");
+        values.put("newNumber", "123456");
+        values.put("newEmails", "");
+        values.put("newAnrs", "");
 
         boolean result = mIccPhoneBookInterfaceMgr.updateAdnRecordsWithContentValuesInEfBySearch(
-                IccConstants.EF_ADN, values , null);
+                IccConstants.EF_ADN, values , "1234");
 
         assertTrue(result);
     }

@@ -29,10 +29,12 @@ import android.os.Looper;
 import android.os.Message;
 import android.telephony.AccessNetworkConstants;
 import android.telephony.Rlog;
+import android.telephony.TelephonyManager;
 import android.telephony.data.ApnSetting;
 import android.telephony.data.ApnSetting.ApnType;
 import android.util.LocalLog;
 
+import com.android.internal.telephony.PhoneFactory;
 import com.android.internal.telephony.Phone;
 import com.android.internal.telephony.PhoneSwitcher;
 import com.android.internal.telephony.SubscriptionController;
@@ -85,6 +87,9 @@ public class TelephonyNetworkFactory extends NetworkFactory {
 
     private final Handler mInternalHandler;
 
+
+    private static final int PRIMARY_SLOT = 0;
+    private static final int SECONDARY_SLOT = 1;
 
     public TelephonyNetworkFactory(SubscriptionMonitor subscriptionMonitor, Looper looper,
                                    Phone phone, PhoneSwitcher phoneSwitcher) {
@@ -276,6 +281,15 @@ public class TelephonyNetworkFactory extends NetworkFactory {
         msg.sendToTarget();
     }
 
+    private boolean isNetworkCapabilityEims(NetworkRequest networkRequest) {
+        return networkRequest.networkCapabilities.hasCapability(
+            android.net.NetworkCapabilities.NET_CAPABILITY_EIMS);
+    }
+
+    private boolean isSimPresentInSecondarySlot() {
+        return TelephonyManager.getDefault().hasIccCard(SECONDARY_SLOT);
+    }
+
     private void onNeedNetworkFor(Message msg) {
         NetworkRequest networkRequest = (NetworkRequest) msg.obj;
         if (networkRequest.type != NetworkRequest.Type.REQUEST) {
@@ -345,16 +359,16 @@ public class TelephonyNetworkFactory extends NetworkFactory {
                 if (dcTracker != null) {
                     DataConnection dc = dcTracker.getDataConnectionByApnType(
                             ApnSetting.getApnTypeString(apnType));
-                    if (dc != null && (dc.isActive() || dc.isActivating())) {
+                    if (dc != null && (dc.isActive())) {
                         Message onCompleteMsg = mInternalHandler.obtainMessage(
                                 EVENT_DATA_HANDOVER_COMPLETED);
                         onCompleteMsg.getData().putParcelable(
                                 DcTracker.DATA_COMPLETE_MSG_EXTRA_NETWORK_REQUEST, networkRequest);
                         mPendingHandovers.put(onCompleteMsg, handoverParams);
-                        // TODO: Need to handle the case that the request is there, but there is no
-                        // actual data connections established.
                         requestNetworkInternal(networkRequest, DcTracker.REQUEST_TYPE_HANDOVER,
                                 targetTransport, onCompleteMsg);
+                        log("Requested handover " + ApnSetting.getApnTypeString(apnType) + " to "
+                                + AccessNetworkConstants.transportTypeToString(targetTransport));
                         handoverPending = true;
                     } else {
                         // Request is there, but no actual data connection. In this case, just move

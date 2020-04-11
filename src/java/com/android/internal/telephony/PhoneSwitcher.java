@@ -17,6 +17,7 @@
 package com.android.internal.telephony;
 
 import static android.net.NetworkCapabilities.TRANSPORT_CELLULAR;
+import static android.telephony.CarrierConfigManager.KEY_DATA_SWITCH_VALIDATION_TIMEOUT_LONG;
 import static android.telephony.SubscriptionManager.DEFAULT_SUBSCRIPTION_ID;
 import static android.telephony.SubscriptionManager.INVALID_PHONE_INDEX;
 import static android.telephony.SubscriptionManager.INVALID_SUBSCRIPTION_ID;
@@ -41,10 +42,12 @@ import android.os.AsyncResult;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.Message;
+import android.os.PersistableBundle;
 import android.os.Registrant;
 import android.os.RegistrantList;
 import android.os.RemoteException;
 import android.os.ServiceManager;
+import android.telephony.CarrierConfigManager;
 import android.telephony.PhoneCapability;
 import android.telephony.PhoneStateListener;
 import android.telephony.Rlog;
@@ -79,7 +82,6 @@ import java.util.concurrent.CompletableFuture;
 public class PhoneSwitcher extends Handler {
     protected static final String LOG_TAG = "PhoneSwitcher";
     protected static final boolean VDBG = false;
-
     private static final int DEFAULT_NETWORK_CHANGE_TIMEOUT_MS = 5000;
     private static final int MODEM_COMMAND_RETRY_PERIOD_MS     = 5000;
     // After the emergency call ends, wait for a few seconds to see if we enter ECBM before starting
@@ -893,6 +895,11 @@ public class PhoneSwitcher extends Handler {
     }
 
     private void switchPhone(int phoneId, boolean active) {
+        if (phoneId < 0 || phoneId >= mNumPhones) {
+            log("switchPhone, phoneId: " + phoneId +
+                ", mNumPhones: " + mNumPhones + ", should never here!");
+            return;
+        }
         PhoneState state = mPhoneStates[phoneId];
         if (state.active == active) return;
         state.active = active;
@@ -966,7 +973,7 @@ public class PhoneSwitcher extends Handler {
         }
     }
 
-    private int phoneIdForRequest(NetworkRequest netRequest) {
+    protected int phoneIdForRequest(NetworkRequest netRequest) {
         int subId = getSubIdFromNetworkSpecifier(netRequest.networkCapabilities
                 .getNetworkSpecifier());
 
@@ -1113,6 +1120,11 @@ public class PhoneSwitcher extends Handler {
 
     @VisibleForTesting
     protected boolean isPhoneActive(int phoneId) {
+        if (phoneId < 0 || phoneId >= mNumPhones) {
+            log("isPhoneActive, phoneId: " + phoneId +
+                ", mNumPhones: " + mNumPhones + ", should never here!");
+            return false;
+        }
         return mPhoneStates[phoneId].active;
     }
 
@@ -1189,8 +1201,16 @@ public class PhoneSwitcher extends Handler {
         // start validation on the subscription first.
         if (mValidator.isValidationFeatureSupported() && needValidation) {
             mSetOpptSubCallback = callback;
-            mValidator.validate(subIdToValidate, DEFAULT_VALIDATION_EXPIRATION_TIME,
-                    false, mValidationCallback);
+            long validationTimeout = DEFAULT_VALIDATION_EXPIRATION_TIME;
+            CarrierConfigManager configManager = (CarrierConfigManager)
+                    mContext.getSystemService(Context.CARRIER_CONFIG_SERVICE);
+            if (configManager != null) {
+                PersistableBundle b = configManager.getConfigForSubId(subIdToValidate);
+                if (b != null) {
+                    validationTimeout = b.getLong(KEY_DATA_SWITCH_VALIDATION_TIMEOUT_LONG);
+                }
+            }
+            mValidator.validate(subIdToValidate, validationTimeout, false, mValidationCallback);
         } else {
             setOpportunisticSubscriptionInternal(subId);
             sendSetOpptCallbackHelper(callback, SET_OPPORTUNISTIC_SUB_SUCCESS);
@@ -1265,7 +1285,7 @@ public class PhoneSwitcher extends Handler {
                 subId, needValidation ? 1 : 0, callback).sendToTarget();
     }
 
-    private boolean isPhoneInVoiceCall(Phone phone) {
+    protected boolean isPhoneInVoiceCall(Phone phone) {
         if (phone == null) {
             return false;
         }

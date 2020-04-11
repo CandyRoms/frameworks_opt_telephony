@@ -46,6 +46,7 @@ import android.telephony.RadioAccessFamily;
 import android.telephony.Rlog;
 import android.telephony.SubscriptionInfo;
 import android.telephony.SubscriptionManager;
+import android.telephony.SubscriptionManager.SimDisplayNameSource;
 import android.telephony.TelephonyManager;
 import android.telephony.UiccAccessRule;
 import android.telephony.UiccSlotInfo;
@@ -270,6 +271,32 @@ public class SubscriptionController extends ISub.Stub {
         clearSlotIndexForSubInfoRecords();
 
         if (DBG) logdl("[SubscriptionController] init by Phone");
+    }
+
+    /**
+     * Make sure the caller can read phone state which requires holding the
+     * READ_PHONE_STATE permission and the OP_READ_PHONE_STATE app op being
+     * set to MODE_ALLOWED.
+     *
+     * @param callingPackage The package claiming to make the IPC.
+     * @param message The name of the access protected method.
+     *
+     * @throws SecurityException if the caller does not have READ_PHONE_STATE permission.
+     */
+    private boolean canReadPhoneState(String callingPackage, String message) {
+        try {
+            mContext.enforceCallingOrSelfPermission(
+                    android.Manifest.permission.READ_PRIVILEGED_PHONE_STATE, message);
+
+            // SKIP checking run-time permission since self or using PRIVILEDGED permission
+            return true;
+        } catch (SecurityException e) {
+            mContext.enforceCallingOrSelfPermission(android.Manifest.permission.READ_PHONE_STATE,
+                    message);
+        }
+
+        return mAppOps.noteOp(AppOpsManager.OP_READ_PHONE_STATE, Binder.getCallingUid(),
+                callingPackage) == AppOpsManager.MODE_ALLOWED;
     }
 
     @UnsupportedAppUsage
@@ -999,6 +1026,8 @@ public class SubscriptionController extends ISub.Stub {
      */
     @Override
     public int addSubInfoRecord(String iccId, int slotIndex) {
+        if (DBG) logdl("[addSubInfoRecord]+ iccId:" + SubscriptionInfo.givePrintableIccid(iccId) +
+                " slotIndex:" + slotIndex);
         return addSubInfo(iccId, null, slotIndex, SubscriptionManager.SUBSCRIPTION_TYPE_LOCAL_SIM);
     }
 
@@ -1014,17 +1043,19 @@ public class SubscriptionController extends ISub.Stub {
     @Override
     public int addSubInfo(String uniqueId, String displayName, int slotIndex,
             int subscriptionType) {
-        String fullIccId;
-        Phone phone = PhoneFactory.getPhone(slotIndex);
-        UiccCard uiccCard = UiccController.getInstance().getUiccCardForPhone(slotIndex);
-        if (phone != null && uiccCard != null) {
-            fullIccId = phone.getFullIccSerialNumber();
-            if (TextUtils.isEmpty(fullIccId)) {
-                fullIccId = uniqueId;
-            }
-        } else {
+        String fullIccId = uniqueId;
+        if (!isSubscriptionForRemoteSim(subscriptionType)) {
+            Phone phone = PhoneFactory.getPhone(slotIndex);
+            UiccCard uiccCard = UiccController.getInstance().getUiccCardForPhone(slotIndex);
+            if (phone != null && uiccCard != null) {
+                fullIccId = phone.getFullIccSerialNumber();
+                if (TextUtils.isEmpty(fullIccId)) {
+                    fullIccId = uniqueId;
+                }
+            } else {
             if (DBG) logdl("[addSubInfoRecord]- null fullIccId");
-            return -1;
+                return -1;
+            }
         }
 
         if (DBG) {
@@ -1435,9 +1466,6 @@ public class SubscriptionController extends ISub.Stub {
 
         Uri uri = resolver.insert(SubscriptionManager.CONTENT_URI, value);
 
-        // Refresh the Cache of Active Subscription Info List
-        refreshCachedActiveSubscriptionInfoList();
-
         return uri;
     }
 
@@ -1556,30 +1584,27 @@ public class SubscriptionController extends ISub.Stub {
      * @param nameSource Source of display name
      * @return int representing the priority. Higher value means higher priority.
      */
-    public static int getNameSourcePriority(int nameSource) {
-        switch (nameSource) {
-            case SubscriptionManager.NAME_SOURCE_USER_INPUT:
-                return 3;
-            case SubscriptionManager.NAME_SOURCE_CARRIER:
-                return 2;
-            case SubscriptionManager.NAME_SOURCE_SIM_SOURCE:
-                return 1;
-            case SubscriptionManager.NAME_SOURCE_DEFAULT_SOURCE:
-            default:
-                return 0;
-        }
+    public static int getNameSourcePriority(@SimDisplayNameSource int nameSource) {
+        int index = Arrays.asList(
+                SubscriptionManager.NAME_SOURCE_DEFAULT_SOURCE,
+                SubscriptionManager.NAME_SOURCE_SIM_PNN,
+                SubscriptionManager.NAME_SOURCE_SIM_SPN,
+                SubscriptionManager.NAME_SOURCE_CARRIER,
+                SubscriptionManager.NAME_SOURCE_USER_INPUT // user has highest priority.
+        ).indexOf(nameSource);
+        return (index < 0) ? 0 : index;
     }
 
     /**
      * Set display name by simInfo index with name source
      * @param displayName the display name of SIM card
      * @param subId the unique SubInfoRecord index in database
-     * @param nameSource 0: NAME_SOURCE_DEFAULT_SOURCE, 1: NAME_SOURCE_SIM_SOURCE,
-     *                   2: NAME_SOURCE_USER_INPUT, 3: NAME_SOURCE_CARRIER
+     * @param nameSource SIM display name source
      * @return the number of records updated
      */
     @Override
-    public int setDisplayNameUsingSrc(String displayName, int subId, int nameSource) {
+    public int setDisplayNameUsingSrc(String displayName, int subId,
+                                      @SimDisplayNameSource int nameSource) {
         if (DBG) {
             logd("[setDisplayName]+  displayName:" + displayName + " subId:" + subId
                 + " nameSource:" + nameSource);
@@ -1599,6 +1624,10 @@ public class SubscriptionController extends ISub.Stub {
                         && (getNameSourcePriority(subInfo.getNameSource())
                                 > getNameSourcePriority(nameSource)
                         || (displayName != null && displayName.equals(subInfo.getDisplayName())))) {
+                    logd("Name source " + subInfo.getNameSource() + "'s priority "
+                            + getNameSourcePriority(subInfo.getNameSource()) + " is greater than "
+                            + "name source " + nameSource + "'s priority "
+                            + getNameSourcePriority(nameSource) + ", return now.");
                     return 0;
                 }
             }

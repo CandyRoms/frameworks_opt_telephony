@@ -210,6 +210,7 @@ public class RIL extends BaseCommands implements CommandsInterface {
 
     final Integer mPhoneId;
     private List<String> mOldRilFeatures;
+    private boolean mUseOldMncMccFormat;
 
     /**
      * A set that records if radio service is disabled in hal for
@@ -584,12 +585,15 @@ public class RIL extends BaseCommands implements CommandsInterface {
         final String oldRilFeatures = SystemProperties.get("ro.telephony.ril.config", "");
         mOldRilFeatures = Arrays.asList(oldRilFeatures.split(","));
 
+        mUseOldMncMccFormat = SystemProperties.getBoolean(
+                "ro.telephony.use_old_mnc_mcc_format", false);
+
         ConnectivityManager cm = (ConnectivityManager)context.getSystemService(
                 Context.CONNECTIVITY_SERVICE);
         mIsMobileNetworkSupported = cm.isNetworkSupported(ConnectivityManager.TYPE_MOBILE);
 
-        mRadioResponse = new RadioResponse(this);
-        mRadioIndication = new RadioIndication(this);
+        mRadioResponse = createRadioResponse(this);
+        mRadioIndication = createRadioIndication(this);
         mOemHookResponse = new OemHookResponse(this);
         mOemHookIndication = new OemHookIndication(this);
         mRilHandler = new RilHandler();
@@ -627,6 +631,14 @@ public class RIL extends BaseCommands implements CommandsInterface {
                 mContext.getContentResolver(),
                 Settings.Global.ENABLE_RADIO_BUG_DETECTION,
                 1) != 0;
+    }
+
+    protected RadioResponse createRadioResponse(RIL ril) {
+        return new RadioResponse(ril);
+    }
+
+    protected RadioIndication createRadioIndication(RIL ril) {
+        return new RadioIndication(ril);
     }
 
     @Override
@@ -2008,6 +2020,10 @@ public class RIL extends BaseCommands implements CommandsInterface {
         if (radioProxy != null) {
             RILRequest rr = obtainRequest(RIL_REQUEST_SET_NETWORK_SELECTION_MANUAL, result,
                     mRILDefaultWorkSource);
+
+            if (mUseOldMncMccFormat && !TextUtils.isEmpty(operatorNumeric)) {
+                operatorNumeric += "+";
+            }
 
             if (RILJ_LOGD) {
                 riljLog(rr.serialString() + "> " + requestToString(rr.mRequest)
@@ -5687,6 +5703,8 @@ public class RIL extends BaseCommands implements CommandsInterface {
                 return "RIL_UNSOL_KEEPALIVE_STATUS";
             case RIL_UNSOL_PHYSICAL_CHANNEL_CONFIG:
                 return "RIL_UNSOL_PHYSICAL_CHANNEL_CONFIG";
+            case RIL_UNSOL_EMERGENCY_NUMBER_LIST:
+                return "RIL_UNSOL_EMERGENCY_NUMBER_LIST";
             default:
                 return "<unknown response>";
         }
@@ -5943,11 +5961,14 @@ public class RIL extends BaseCommands implements CommandsInterface {
             }
         }
         switch (voiceRat) {
+            case ServiceState.RIL_RADIO_TECHNOLOGY_GPRS: /* fallthrough */
+            case ServiceState.RIL_RADIO_TECHNOLOGY_EDGE: /* fallthrough */
             case ServiceState.RIL_RADIO_TECHNOLOGY_UMTS: /* fallthrough */
             case ServiceState.RIL_RADIO_TECHNOLOGY_HSDPA: /* fallthrough */
             case ServiceState.RIL_RADIO_TECHNOLOGY_HSUPA: /* fallthrough */
             case ServiceState.RIL_RADIO_TECHNOLOGY_HSPA: /* fallthrough */
             case ServiceState.RIL_RADIO_TECHNOLOGY_HSPAP: /* fallthrough */
+            case ServiceState.RIL_RADIO_TECHNOLOGY_GSM: /* fallthrough */
                 break;
             default:
                 // If we are not currently on WCDMA/HSPA, then we don't need to do a fixup.

@@ -29,6 +29,7 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.hardware.radio.V1_0.RadioTechnologyFamily;
 import android.net.Uri;
 import android.os.AsyncResult;
 import android.os.Handler;
@@ -339,10 +340,10 @@ public class SmsDispatchersController extends Handler {
 
     private void setImsSmsFormat(int format) {
         switch (format) {
-            case PhoneConstants.PHONE_TYPE_GSM:
+            case RadioTechnologyFamily.THREE_GPP:
                 mImsSmsFormat = SmsConstants.FORMAT_3GPP;
                 break;
-            case PhoneConstants.PHONE_TYPE_CDMA:
+            case RadioTechnologyFamily.THREE_GPP2:
                 mImsSmsFormat = SmsConstants.FORMAT_3GPP2;
                 break;
             default:
@@ -434,7 +435,8 @@ public class SmsDispatchersController extends Handler {
         String oldFormat = tracker.mFormat;
         boolean retryUsingImsService = false;
 
-        if (!tracker.mUsesImsServiceForIms && mImsSmsDispatcher.isAvailable()) {
+        if (!tracker.mUsesImsServiceForIms && mImsSmsDispatcher.isAvailable()
+                && !tracker.mIsFallBackRetry) {
             // If this tracker has not been handled by ImsSmsDispatcher yet and IMS Service is
             // available now, retry this failed tracker using IMS Service.
             retryUsingImsService = true;
@@ -730,7 +732,7 @@ public class SmsDispatchersController extends Handler {
             ArrayList<PendingIntent> deliveryIntents, Uri messageUri, String callingPkg,
             boolean persistMessage, int priority, boolean expectMore, int validityPeriod,
             long messageId) {
-        if (mImsSmsDispatcher.isAvailable()) {
+        if (mImsSmsDispatcher.isAvailable() || mImsSmsDispatcher.isEmergencySmsSupport(destAddr)) {
             mImsSmsDispatcher.sendMultipartText(destAddr, scAddr, parts, sentIntents,
                     deliveryIntents, messageUri, callingPkg, persistMessage,
                     SMS_MESSAGE_PRIORITY_NOT_SPECIFIED,

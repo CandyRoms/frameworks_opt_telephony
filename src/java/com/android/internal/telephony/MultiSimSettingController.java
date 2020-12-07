@@ -117,8 +117,9 @@ public class MultiSimSettingController extends Handler {
 
     protected final Context mContext;
     protected final SubscriptionController mSubController;
+    protected boolean mIsAllSubscriptionsLoaded;
     // Keep a record of active primary (non-opportunistic) subscription list.
-    @NonNull private List<Integer> mPrimarySubList = new ArrayList<>();
+    @NonNull protected List<Integer> mPrimarySubList = new ArrayList<>();
 
     /** The singleton instance. */
     protected static MultiSimSettingController sInstance = null;
@@ -871,11 +872,11 @@ public class MultiSimSettingController extends Handler {
         }
     }
 
-    private void log(String msg) {
+    protected void log(String msg) {
         Log.d(LOG_TAG, msg);
     }
 
-    private void loge(String msg) {
+    protected void loge(String msg) {
         Log.e(LOG_TAG, msg);
     }
 }

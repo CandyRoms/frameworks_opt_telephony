@@ -33,6 +33,7 @@ import android.os.Message;
 import android.os.PersistableBundle;
 import android.os.Registrant;
 import android.os.RegistrantList;
+import android.os.ResultReceiver;
 import android.os.SystemClock;
 import android.os.SystemProperties;
 import android.os.WorkSource;
@@ -48,6 +49,7 @@ import android.telephony.CellIdentity;
 import android.telephony.CellInfo;
 import android.telephony.ClientRequestStats;
 import android.telephony.ImsiEncryptionInfo;
+import android.telephony.PhoneNumberUtils;
 import android.telephony.PhoneStateListener;
 import android.telephony.PhysicalChannelConfig;
 import android.telephony.PreciseDataConnectionState;
@@ -76,6 +78,7 @@ import com.android.internal.telephony.dataconnection.DataConnectionReasons;
 import com.android.internal.telephony.dataconnection.DataEnabledSettings;
 import com.android.internal.telephony.dataconnection.DcTracker;
 import com.android.internal.telephony.dataconnection.TransportManager;
+import com.android.internal.telephony.EcbmHandler;
 import com.android.internal.telephony.emergency.EmergencyNumberTracker;
 import com.android.internal.telephony.imsphone.ImsPhoneCall;
 import com.android.internal.telephony.metrics.VoiceCallSessionStats;
@@ -84,6 +87,7 @@ import com.android.internal.telephony.uicc.IccCardApplicationStatus.AppType;
 import com.android.internal.telephony.uicc.IccFileHandler;
 import com.android.internal.telephony.uicc.IccRecords;
 import com.android.internal.telephony.uicc.IsimRecords;
+import com.android.internal.telephony.uicc.SIMRecords;
 import com.android.internal.telephony.uicc.UiccCard;
 import com.android.internal.telephony.uicc.UiccCardApplication;
 import com.android.internal.telephony.uicc.UiccController;
@@ -129,6 +133,8 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
     public static final String NETWORK_SELECTION_NAME_KEY = "network_selection_name_key";
     // Key used to read and write the saved network selection operator short name
     public static final String NETWORK_SELECTION_SHORT_KEY = "network_selection_short_key";
+    public static final String KEY_DO_NOT_SHOW_LIMITED_SERVICE_ALERT
+            = "key_do_not_show_limited_service_alert";
 
 
     // Key used to read/write "disable data connection on boot" pref (used for testing)
@@ -230,6 +236,9 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
     // Key used to read/write the ID for storing the voice mail
     private static final String VM_ID = "vm_id_key";
 
+    // Key used to read/write if Video Call Forwarding is enabled
+    public static final String CF_VIDEO = "cf_key_video";
+
     // Key used for storing call forwarding status
     public static final String CF_STATUS = "cf_status_key";
     // Key used to read/write the ID for storing the call forwarding status
@@ -292,9 +301,6 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
     private boolean mIsVoiceCapable = true;
     private final AppSmsManager mAppSmsManager;
     private SimActivationTracker mSimActivationTracker;
-    // Keep track of whether or not the phone is in Emergency Callback Mode for Phone and
-    // subclasses
-    protected boolean mIsPhoneInEcmState = false;
     // Keep track of the case where ECM was cancelled to place another outgoing emergency call.
     // We will need to restart it after the emergency call ends.
     protected boolean mEcmCanceledForEmergency = false;
@@ -330,13 +336,14 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
     @UnsupportedAppUsage
     protected Phone mImsPhone = null;
 
-    private final AtomicReference<RadioCapability> mRadioCapability =
+    protected final AtomicReference<RadioCapability> mRadioCapability =
             new AtomicReference<RadioCapability>();
 
     private static final int DEFAULT_REPORT_INTERVAL_MS = 200;
     private static final boolean LCE_PULL_MODE = true;
     private int mLceStatus = RILConstants.LCE_NOT_AVAILABLE;
     protected TelephonyComponentFactory mTelephonyComponentFactory;
+    protected EcbmHandler mEcbmHandler;
 
     //IMS
     /**
@@ -999,6 +1006,17 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
         return isInEmergencySmsMode;
     }
 
+    public void migrateUssdFrom(Phone from, String num, ResultReceiver wrappedCallback)
+            throws UnsupportedOperationException {
+        try {
+            notifyMigrateUssd(num, wrappedCallback);
+            migrate(mMmiRegistrants, from.mMmiRegistrants);
+        } catch (UnsupportedOperationException e) {
+            Rlog.e(LOG_TAG, "Error: " + e);
+            throw e;
+        }
+    }
+
     protected void migrateFrom(Phone from) {
         migrate(mHandoverRegistrants, from.mHandoverRegistrants);
         migrate(mPreciseCallStateRegistrants, from.mPreciseCallStateRegistrants);
@@ -1453,7 +1471,7 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
 
     private void updateSavedNetworkOperator(NetworkSelectMessage nsm) {
         int subId = getSubId();
-        if (SubscriptionManager.isValidSubscriptionId(subId)) {
+        if (SubscriptionController.getInstance().isActiveSubId(subId)) {
             // open the shared preferences editor, and write the value.
             // nsm.operatorNumeric is "" if we're in automatic.selection.
             SharedPreferences sp = PreferenceManager.getDefaultSharedPreferences(getContext());
@@ -2018,7 +2036,7 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
     private int getCallForwardingIndicatorFromSharedPref() {
         int status = IccRecords.CALL_FORWARDING_STATUS_DISABLED;
         int subId = getSubId();
-        if (SubscriptionManager.isValidSubscriptionId(subId)) {
+        if (SubscriptionController.getInstance().isActiveSubId(subId)) {
             SharedPreferences sp = PreferenceManager.getDefaultSharedPreferences(mContext);
             status = sp.getInt(CF_STATUS + subId, IccRecords.CALL_FORWARDING_STATUS_UNKNOWN);
             Rlog.d(LOG_TAG, "getCallForwardingIndicatorFromSharedPref: for subId " + subId + "= " +
@@ -2125,7 +2143,31 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
         Rlog.v(LOG_TAG, "getCallForwardingIndicator: iccForwardingFlag=" + (r != null
                     ? r.getVoiceCallForwardingFlag() : "null") + ", sharedPrefFlag="
                     + getCallForwardingIndicatorFromSharedPref());
-        return (callForwardingIndicator == IccRecords.CALL_FORWARDING_STATUS_ENABLED);
+        return ((callForwardingIndicator == IccRecords.CALL_FORWARDING_STATUS_ENABLED) ||
+                getVideoCallForwardingPreference());
+    }
+
+    /**
+     * This method stores the CF_VIDEO flag in preferences
+     * @param enabled
+     */
+    public void setVideoCallForwardingPreference(boolean enabled) {
+        Rlog.d(LOG_TAG, "Set video call forwarding info to preferences enabled = " + enabled
+                + "subId = " + getSubId());
+        SharedPreferences sp = PreferenceManager.getDefaultSharedPreferences(mContext);
+        SharedPreferences.Editor edit = sp.edit();
+        edit.putBoolean(CF_VIDEO + getSubId(), enabled);
+        edit.commit();
+    }
+
+    /**
+     * This method gets Video Call Forwarding enabled/disabled from preferences
+     */
+    public boolean getVideoCallForwardingPreference() {
+        Rlog.d(LOG_TAG, "Get video call forwarding info from preferences");
+
+        SharedPreferences sp = PreferenceManager.getDefaultSharedPreferences(mContext);
+        return sp.getBoolean(CF_VIDEO + getSubId(), false);
     }
 
     public CarrierSignalAgent getCarrierSignalAgent() {
@@ -2611,6 +2653,12 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
         mNotifier.notifyCellInfo(this, cellInfo);
     }
 
+    protected void notifyMigrateUssd(String num, ResultReceiver wrappedCallback)
+            throws UnsupportedOperationException {
+        // notifyMigrateUssd shall be overriden by GsmCdmaPhone
+        throw new UnsupportedOperationException("notifyMigrateUssd: not supported");
+    }
+
     /**
      * Registration point for PhysicalChannelConfig change.
      * @param h handler to notify
@@ -2676,24 +2724,12 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
         return TelephonyProperties.in_ecm_mode().orElse(false);
     }
 
-    /**
-     * @return {@code true} if we are in emergency call back mode. This is a period where the phone
-     * should be using as little power as possible and be ready to receive an incoming call from the
-     * emergency operator.
-     */
     public boolean isInEcm() {
-        return mIsPhoneInEcmState;
+        return EcbmHandler.getInstance().isInEcm();
     }
 
     public boolean isInImsEcm() {
         return false;
-    }
-
-    public void setIsInEcm(boolean isInEcm) {
-        if (!getUnitTestMode()) {
-            TelephonyProperties.in_ecm_mode(isInEcm);
-        }
-        mIsPhoneInEcmState = isInEcm;
     }
 
     /**
@@ -2779,7 +2815,7 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
     public void setVoiceMessageCount(int countWaiting) {
         mVmCount = countWaiting;
         int subId = getSubId();
-        if (SubscriptionManager.isValidSubscriptionId(subId)) {
+        if (SubscriptionController.getInstance().isActiveSubId(subId)) {
 
             Rlog.d(LOG_TAG, "setVoiceMessageCount: Storing Voice Mail Count = " + countWaiting +
                     " for mVmCountKey = " + VM_COUNT + subId + " in preferences.");
@@ -2808,7 +2844,7 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
     protected int getStoredVoiceMessageCount() {
         int countVoiceMessages = 0;
         int subId = getSubId();
-        if (SubscriptionManager.isValidSubscriptionId(subId)) {
+        if (SubscriptionController.getInstance().isActiveSubId(subId)) {
             int invalidCount = -2;  //-1 is not really invalid. It is used for unknown number of vm
             SharedPreferences sp = PreferenceManager.getDefaultSharedPreferences(mContext);
             int countFromSP = sp.getInt(VM_COUNT + subId, invalidCount);
@@ -4074,7 +4110,7 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
 
     protected void setPreferredNetworkTypeIfSimLoaded() {
         int subId = getSubId();
-        if (SubscriptionManager.isValidSubscriptionId(subId)) {
+        if (SubscriptionManager.from(mContext).isActiveSubId(subId)) {
             int type = PhoneFactory.calculatePreferredNetworkType(mContext, getSubId());
             setPreferredNetworkType(type, null);
         }
@@ -4330,8 +4366,23 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
         mCi.setSimCardPower(state, null, workSource);
     }
 
+    public SIMRecords getSIMRecords() {
+        return null;
+    }
+
     public void setCarrierTestOverride(String mccmnc, String imsi, String iccid, String gid1,
             String gid2, String pnn, String spn, String carrierPrivilegeRules, String apn) {
+    }
+
+    @Override
+    public void getCallForwardingOption(int commandInterfaceCFReason,
+            int commandInterfaceServiceClass, Message onComplete) {
+    }
+
+    @Override
+    public void setCallForwardingOption(int commandInterfaceCFReason,
+            int commandInterfaceCFAction, String dialingNumber,
+            int commandInterfaceServiceClass, int timerSeconds, Message onComplete) {
     }
 
     /**
@@ -4610,5 +4661,9 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
             pw.flush();
             pw.println("++++++++++++++++++++++++++++++++");
         }
+    }
+
+    public boolean isEmergencyNumber(String address) {
+        return PhoneNumberUtils.isEmergencyNumber(getSubId(), address);
     }
 }

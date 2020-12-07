@@ -534,6 +534,10 @@ public class ApnContext {
         return mConnectionGeneration.incrementAndGet();
     }
 
+    public int decAndGetConnectionGeneration() {
+        return mConnectionGeneration.decrementAndGet();
+    }
+
     public int getConnectionGeneration() {
         return mConnectionGeneration.get();
     }

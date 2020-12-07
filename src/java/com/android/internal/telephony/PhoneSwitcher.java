@@ -84,7 +84,7 @@ import java.util.concurrent.CompletableFuture;
  * the active phones.  Note we don't wait for data attach (which may not happen anyway).
  */
 public class PhoneSwitcher extends Handler {
-    private static final String LOG_TAG = "PhoneSwitcher";
+    protected static final String LOG_TAG = "PhoneSwitcher";
     protected static final boolean VDBG = false;
 
     private static final int DEFAULT_NETWORK_CHANGE_TIMEOUT_MS = 5000;
@@ -231,7 +231,7 @@ public class PhoneSwitcher extends Handler {
 
     private ISetOpportunisticDataCallback mSetOpptSubCallback;
 
-    private static final int EVENT_PRIMARY_DATA_SUB_CHANGED       = 101;
+    protected static final int EVENT_PRIMARY_DATA_SUB_CHANGED       = 101;
     protected static final int EVENT_SUBSCRIPTION_CHANGED           = 102;
     private static final int EVENT_REQUEST_NETWORK                = 103;
     private static final int EVENT_RELEASE_NETWORK                = 104;
@@ -242,7 +242,7 @@ public class PhoneSwitcher extends Handler {
     private static final int EVENT_EMERGENCY_TOGGLE               = 105;
     private static final int EVENT_RADIO_CAPABILITY_CHANGED       = 106;
     private static final int EVENT_OPPT_DATA_SUB_CHANGED          = 107;
-    private static final int EVENT_RADIO_AVAILABLE                = 108;
+    protected static final int EVENT_RADIO_AVAILABLE                = 108;
     // A call has either started or ended. If an emergency ended and DDS is overridden using
     // mEmergencyOverride, start the countdown to remove the override using the message
     // EVENT_REMOVE_DDS_EMERGENCY_OVERRIDE. The only exception to this is if the device moves to
@@ -266,6 +266,9 @@ public class PhoneSwitcher extends Handler {
     @VisibleForTesting
     public static final int EVENT_MULTI_SIM_CONFIG_CHANGED        = 117;
     private static final int EVENT_NETWORK_AVAILABLE              = 118;
+    protected final static int EVENT_VOICE_CALL_ENDED             = 119;
+    protected static final int EVENT_UNSOL_MAX_DATA_ALLOWED_CHANGED = 120;
+    protected static final int EVENT_OEM_HOOK_SERVICE_READY       = 121;
 
     // Depending on version of IRadioConfig, we need to send either RIL_REQUEST_ALLOW_DATA if it's
     // 1.0, or RIL_REQUEST_SET_PREFERRED_DATA if it's 1.1 or later. So internally mHalCommandToUse
@@ -694,6 +697,12 @@ public class PhoneSwitcher extends Handler {
     private void onRequestNetwork(NetworkRequest networkRequest) {
         final DcRequest dcRequest =
                 DcRequest.create(networkRequest, createApnRepository(networkRequest));
+        if (networkRequest.type != NetworkRequest.Type.REQUEST &&
+                networkRequest.type != NetworkRequest.Type.BACKGROUND_REQUEST) {
+           log("Skip non REQUEST/BACKGROUND_REQUEST type request: " + networkRequest);
+           return;
+        }
+
         if (dcRequest != null) {
             if (!mPrioritizedDcRequests.contains(dcRequest)) {
                 collectRequestNetworkMetrics(networkRequest);
@@ -709,7 +718,8 @@ public class PhoneSwitcher extends Handler {
         final DcRequest dcRequest =
                 DcRequest.create(networkRequest, createApnRepository(networkRequest));
         if (dcRequest != null) {
-            if (mPrioritizedDcRequests.remove(dcRequest)) {
+            if (mPrioritizedDcRequests.contains(dcRequest) &&
+                    mPrioritizedDcRequests.remove(dcRequest)) {
                 onEvaluate(REQUESTS_CHANGED, "netReleased");
                 collectReleaseNetworkMetrics(networkRequest);
                 log("Removed DcRequest, size: " + mPrioritizedDcRequests.size());
@@ -1005,7 +1015,7 @@ public class PhoneSwitcher extends Handler {
         }
     }
 
-    private int phoneIdForRequest(NetworkRequest netRequest) {
+    protected int phoneIdForRequest(NetworkRequest netRequest) {
         int subId = getSubIdFromNetworkSpecifier(netRequest.getNetworkSpecifier());
 
         if (subId == DEFAULT_SUBSCRIPTION_ID) return mPreferredDataPhoneId;

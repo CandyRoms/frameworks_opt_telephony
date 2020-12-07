@@ -350,6 +350,7 @@ public class ServiceStateTracker extends Handler {
     private int mPrevSubId = SubscriptionManager.INVALID_SUBSCRIPTION_ID;
 
     private boolean mImsRegistered = false;
+    private boolean mCarrierConfigLoaded = false;
 
     @UnsupportedAppUsage
     private SubscriptionManager mSubscriptionManager;
@@ -388,7 +389,7 @@ public class ServiceStateTracker extends Handler {
             int subId = mPhone.getSubId();
             ServiceStateTracker.this.mPrevSubId = mPreviousSubId.get();
             if (mPreviousSubId.getAndSet(subId) != subId) {
-                if (SubscriptionManager.isValidSubscriptionId(subId)) {
+                if (mSubscriptionController.isActiveSubId(subId)) {
                     Context context = mPhone.getContext();
 
                     mPhone.notifyPhoneStateChanged();
@@ -759,6 +760,7 @@ public class ServiceStateTracker extends Handler {
         mNewSS = new ServiceState();
         mNewSS.setStateOutOfService();
         mLastCellInfoReqTime = 0;
+        mNewSS.setStateOutOfService();
         mLastCellInfoList = null;
         mSignalStrength = new SignalStrength();
         mStartedGprsRegCheck = false;
@@ -1772,7 +1774,7 @@ public class ServiceStateTracker extends Handler {
                 .getSystemService(Context.TELEPHONY_SERVICE))
                 .getSimOperatorNumericForPhone(mPhone.getPhoneId());
 
-        if (!TextUtils.isEmpty(operatorNumeric) && getCdmaMin() != null) {
+        if (!TextUtils.isEmpty(operatorNumeric) && !TextUtils.isEmpty(getCdmaMin())) {
             return (operatorNumeric + getCdmaMin());
         } else {
             return null;
@@ -2521,7 +2523,12 @@ public class ServiceStateTracker extends Handler {
              * The test for the operators is to handle special roaming
              * agreements and MVNO's.
              */
-            boolean roaming = (mGsmVoiceRoaming || mGsmDataRoaming);
+            boolean roaming = (mGsmVoiceRoaming || mGsmDataRoaming) && mCarrierConfigLoaded;
+
+            // for IWLAN case, data is home. Only check voice roaming.
+            if (mNewSS.getRilDataRadioTechnology() == ServiceState.RIL_RADIO_TECHNOLOGY_IWLAN) {
+                roaming = mGsmVoiceRoaming;
+            }
 
             if (roaming && !isOperatorConsideredRoaming(mNewSS)
                     && (isSameNamedOperators(mNewSS) || isOperatorConsideredNonRoaming(mNewSS))) {
@@ -3668,7 +3675,7 @@ public class ServiceStateTracker extends Handler {
                     && (mEriManager.isEriFileLoaded())
                     && (!ServiceState.isPsOnlyTech(mSS.getRilVoiceRadioTechnology())
                     || mPhone.getContext().getResources().getBoolean(com.android.internal.R
-                    .bool.config_LTE_eri_for_network_name))) {
+                    .bool.config_LTE_eri_for_network_name)) && (!mIsSubscriptionFromRuim)) {
                 // Only when CDMA is in service, ERI will take effect
                 eriText = mSS.getOperatorAlpha();
                 // Now the Phone sees the new ServiceState so it can get the new ERI text
@@ -4845,6 +4852,9 @@ public class ServiceStateTracker extends Handler {
         // Load the ERI based on carrier config. Carrier might have their specific ERI.
         mEriManager.loadEriFile();
         mCdnr.updateEfForEri(getOperatorNameFromEri());
+
+        mCarrierConfigLoaded = true;
+        pollState();
 
         updateLteEarfcnLists(config);
         updateReportingCriteria(config);

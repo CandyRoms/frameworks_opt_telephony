@@ -109,10 +109,10 @@ import java.util.stream.Collectors;
  *
  */
 public class SubscriptionController extends ISub.Stub {
-    private static final String LOG_TAG = "SubscriptionController";
-    private static final boolean DBG = true;
-    private static final boolean VDBG = Rlog.isLoggable(LOG_TAG, Log.VERBOSE);
-    private static final boolean DBG_CACHE = false;
+    static final String LOG_TAG = "SubscriptionController";
+    static final protected boolean DBG = true;
+    static final protected boolean VDBG = Rlog.isLoggable(LOG_TAG, Log.VERBOSE);
+    static final boolean DBG_CACHE = false;
     private static final int DEPRECATED_SETTING = -1;
     private static final ParcelUuid INVALID_GROUP_UUID =
             ParcelUuid.fromString(CarrierConfigManager.REMOVE_GROUP_UUID_STRING);
@@ -276,7 +276,7 @@ public class SubscriptionController extends ISub.Stub {
     };
 
     @UnsupportedAppUsage
-    private static int mDefaultPhoneId = SubscriptionManager.DEFAULT_PHONE_INDEX;
+    protected static int mDefaultPhoneId = SubscriptionManager.DEFAULT_PHONE_INDEX;
 
     @UnsupportedAppUsage
     private int[] colorArr;
@@ -534,6 +534,9 @@ public class SubscriptionController extends ISub.Stub {
         // cardId is the private ICCID/EID string, also known as the card string
         String cardId = cursor.getString(cursor.getColumnIndexOrThrow(
                 SubscriptionManager.CARD_ID));
+        // if cardId is an ICCID, strip off trailing Fs before exposing to user
+        // if cardId is an EID, it's all digits so this is fine
+        cardId = IccUtils.stripTrailingFs(cardId);
         String countryIso = cursor.getString(cursor.getColumnIndexOrThrow(
                 SubscriptionManager.ISO_COUNTRY_CODE));
         // publicCardId is the publicly exposed int card ID
@@ -1254,6 +1257,8 @@ public class SubscriptionController extends ISub.Stub {
      */
     @Override
     public int addSubInfoRecord(String iccId, int slotIndex) {
+        if (DBG) logdl("[addSubInfoRecord]+ iccId:" + SubscriptionInfo.givePrintableIccid(iccId) +
+                " slotIndex:" + slotIndex);
         return addSubInfo(iccId, null, slotIndex, SubscriptionManager.SUBSCRIPTION_TYPE_LOCAL_SIM);
     }
 
@@ -1269,6 +1274,21 @@ public class SubscriptionController extends ISub.Stub {
     @Override
     public int addSubInfo(String uniqueId, String displayName, int slotIndex,
             int subscriptionType) {
+        String fullIccId = uniqueId;
+        if (!isSubscriptionForRemoteSim(subscriptionType)) {
+            Phone phone = PhoneFactory.getPhone(slotIndex);
+            UiccCard uiccCard = UiccController.getInstance().getUiccCardForPhone(slotIndex);
+            if (phone != null && uiccCard != null) {
+                fullIccId = phone.getFullIccSerialNumber();
+                if (TextUtils.isEmpty(fullIccId)) {
+                    fullIccId = uniqueId;
+                }
+            } else {
+            if (DBG) logdl("[addSubInfoRecord]- null fullIccId");
+                return -1;
+            }
+        }
+
         if (DBG) {
             String iccIdStr = uniqueId;
             if (!isSubscriptionForRemoteSim(subscriptionType)) {
@@ -1296,8 +1316,9 @@ public class SubscriptionController extends ISub.Stub {
                 selection += " AND " + SubscriptionManager.SUBSCRIPTION_TYPE + "=?";
                 args = new String[]{uniqueId, Integer.toString(subscriptionType)};
             } else {
-                selection += " OR " + SubscriptionManager.ICC_ID + "=?";
-                args = new String[]{uniqueId, IccUtils.getDecimalSubstring(uniqueId)};
+                selection += " OR " + SubscriptionManager.ICC_ID + "=?"
+                    + " OR " + SubscriptionManager.ICC_ID + "=?" + " collate nocase";
+                args = new String[]{uniqueId, IccUtils.getDecimalSubstring(uniqueId), fullIccId};
             }
             Cursor cursor = resolver.query(SubscriptionManager.CONTENT_URI,
                     new String[]{SubscriptionManager.UNIQUE_KEY_SUBSCRIPTION_ID,
@@ -1335,8 +1356,9 @@ public class SubscriptionController extends ISub.Stub {
                             value.put(SubscriptionManager.SIM_SLOT_INDEX, slotIndex);
                         }
 
-                        if (oldIccId != null && oldIccId.length() < uniqueId.length()
-                                && (oldIccId.equals(IccUtils.getDecimalSubstring(uniqueId)))) {
+                        if (oldIccId != null && oldIccId.length() != uniqueId.length()
+                                && (oldIccId.equals(IccUtils.getDecimalSubstring(uniqueId))
+                                || uniqueId.equalsIgnoreCase(IccUtils.stripTrailingFs(oldIccId)))) {
                             value.put(SubscriptionManager.ICC_ID, uniqueId);
                         }
 
@@ -1398,7 +1420,7 @@ public class SubscriptionController extends ISub.Stub {
                             // Set the default sub if not set or if single sim device
                             if (!isSubscriptionForRemoteSim(subscriptionType)) {
                                 if (!SubscriptionManager.isValidSubscriptionId(defaultSubId)
-                                        || subIdCountMax == 1) {
+                                        || subIdCountMax == 1 || (!isActiveSubId(defaultSubId))) {
                                     logdl("setting default fallback subid to " + subId);
                                     setDefaultFallbackSubId(subId, subscriptionType);
                                 }
@@ -1660,9 +1682,6 @@ public class SubscriptionController extends ISub.Stub {
         }
 
         Uri uri = resolver.insert(SubscriptionManager.CONTENT_URI, value);
-
-        // Refresh the Cache of Active Subscription Info List
-        refreshCachedActiveSubscriptionInfoList();
 
         return uri;
     }
@@ -2473,12 +2492,12 @@ public class SubscriptionController extends ISub.Stub {
         }
     }
 
-    private void logvl(String msg) {
+    protected void logvl(String msg) {
         logv(msg);
         mLocalLog.log(msg);
     }
 
-    private void logv(String msg) {
+    protected void logv(String msg) {
         Rlog.v(LOG_TAG, msg);
     }
 
@@ -2493,7 +2512,7 @@ public class SubscriptionController extends ISub.Stub {
         Rlog.d(LOG_TAG, msg);
     }
 
-    private void logel(String msg) {
+    protected void logel(String msg) {
         loge(msg);
         mLocalLog.log(msg);
     }
@@ -2679,7 +2698,7 @@ public class SubscriptionController extends ISub.Stub {
     }
 
     @UnsupportedAppUsage
-    private void broadcastDefaultDataSubIdChanged(int subId) {
+    protected void broadcastDefaultDataSubIdChanged(int subId) {
         // Broadcast an Intent for default data sub change
         if (DBG) logdl("[broadcastDefaultDataSubIdChanged] subId=" + subId);
         Intent intent = new Intent(TelephonyIntents.ACTION_DEFAULT_DATA_SUBSCRIPTION_CHANGED);
@@ -2738,6 +2757,29 @@ public class SubscriptionController extends ISub.Stub {
                     + phoneId + " subId=" + subId);
         }
         mContext.sendStickyBroadcastAsUser(intent, UserHandle.ALL);
+    }
+
+    protected boolean shouldDefaultBeCleared(List<SubscriptionInfo> records, int subId) {
+        if (DBG) logdl("[shouldDefaultBeCleared: subId] " + subId);
+        if (records == null) {
+            if (DBG) logdl("[shouldDefaultBeCleared] return true no records subId=" + subId);
+            return true;
+        }
+        if (!SubscriptionManager.isValidSubscriptionId(subId)) {
+            // If the subId parameter is not valid its already cleared so return false.
+            if (DBG) logdl("[shouldDefaultBeCleared] return false only one subId, subId=" + subId);
+            return false;
+        }
+        for (SubscriptionInfo record : records) {
+            int id = record.getSubscriptionId();
+            if (DBG) logdl("[shouldDefaultBeCleared] Record.id: " + id);
+            if (id == subId) {
+                logdl("[shouldDefaultBeCleared] return false subId is active, subId=" + subId);
+                return false;
+            }
+        }
+        if (DBG) logdl("[shouldDefaultBeCleared] return true not active subId=" + subId);
+        return true;
     }
 
     /**
@@ -3076,7 +3118,7 @@ public class SubscriptionController extends ISub.Stub {
         return resultValue;
     }
 
-    private void printStackTrace(String msg) {
+    protected void printStackTrace(String msg) {
         RuntimeException re = new RuntimeException();
         logd("StackTrace - " + msg);
         StackTraceElement[] st = re.getStackTrace();
@@ -3155,27 +3197,38 @@ public class SubscriptionController extends ISub.Stub {
      */
     @VisibleForTesting(visibility = VisibleForTesting.Visibility.PRIVATE)
     public void migrateImsSettings() {
-        migrateImsSettingHelper(
-                Settings.Global.ENHANCED_4G_MODE_ENABLED,
-                SubscriptionManager.ENHANCED_4G_MODE_ENABLED);
-        migrateImsSettingHelper(
-                Settings.Global.VT_IMS_ENABLED,
-                SubscriptionManager.VT_IMS_ENABLED);
-        migrateImsSettingHelper(
-                Settings.Global.WFC_IMS_ENABLED,
-                SubscriptionManager.WFC_IMS_ENABLED);
-        migrateImsSettingHelper(
-                Settings.Global.WFC_IMS_MODE,
-                SubscriptionManager.WFC_IMS_MODE);
-        migrateImsSettingHelper(
-                Settings.Global.WFC_IMS_ROAMING_MODE,
-                SubscriptionManager.WFC_IMS_ROAMING_MODE);
-        migrateImsSettingHelper(
-                Settings.Global.WFC_IMS_ROAMING_ENABLED,
-                SubscriptionManager.WFC_IMS_ROAMING_ENABLED);
+        SubscriptionManager sm = SubscriptionManager.from(mContext);
+        if (sm != null) {
+            List<SubscriptionInfo> subInfoList = sm.getAllSubscriptionInfoList();
+            for (SubscriptionInfo si : subInfoList) {
+                int subId = si.getSubscriptionId();
+                if (subId == SubscriptionManager.INVALID_SUBSCRIPTION_ID) {
+                    continue;
+                }
+                migrateImsSettingHelper(
+                        Settings.Global.ENHANCED_4G_MODE_ENABLED + subId,
+                        SubscriptionManager.ENHANCED_4G_MODE_ENABLED, subId);
+                migrateImsSettingHelper(
+                        Settings.Global.VT_IMS_ENABLED + subId,
+                        SubscriptionManager.VT_IMS_ENABLED, subId);
+                migrateImsSettingHelper(
+                        Settings.Global.WFC_IMS_ENABLED + subId,
+                        SubscriptionManager.WFC_IMS_ENABLED, subId);
+                migrateImsSettingHelper(
+                        Settings.Global.WFC_IMS_MODE + subId,
+                        SubscriptionManager.WFC_IMS_MODE, subId);
+                migrateImsSettingHelper(
+                        Settings.Global.WFC_IMS_ROAMING_MODE + subId,
+                        SubscriptionManager.WFC_IMS_ROAMING_MODE, subId);
+                migrateImsSettingHelper(
+                        Settings.Global.WFC_IMS_ROAMING_ENABLED + subId,
+                        SubscriptionManager.WFC_IMS_ROAMING_ENABLED, subId);
+            }
+        }
     }
 
-    private void migrateImsSettingHelper(String settingGlobal, String subscriptionProperty) {
+    private void migrateImsSettingHelper(String settingGlobal, String subscriptionProperty,
+                int subId) {
         ContentResolver resolver = mContext.getContentResolver();
         int defaultSubId = getDefaultVoiceSubId();
         if (defaultSubId == SubscriptionManager.INVALID_SUBSCRIPTION_ID) {
@@ -3186,7 +3239,7 @@ public class SubscriptionController extends ISub.Stub {
 
             if (prevSetting != DEPRECATED_SETTING) {
                 // Write previous setting into Subscription DB.
-                setSubscriptionPropertyIntoContentResolver(defaultSubId, subscriptionProperty,
+                setSubscriptionPropertyIntoContentResolver(subId, subscriptionProperty,
                         Integer.toString(prevSetting), resolver);
                 // Write global setting value with DEPRECATED_SETTING making sure
                 // migration only happen once.
@@ -3733,9 +3786,6 @@ public class SubscriptionController extends ISub.Stub {
                 throw new IllegalArgumentException(
                         "setSubscriptionEnabled not usable subId " + subId);
             }
-
-            // Nothing to do if it's already active or inactive.
-            if (enable == isActiveSubscriptionId(subId)) return true;
 
             SubscriptionInfo info = SubscriptionController.getInstance()
                     .getAllSubInfoList(mContext.getOpPackageName(), mContext.getAttributionTag())
@@ -4284,7 +4334,7 @@ public class SubscriptionController extends ISub.Stub {
     /**
      * @hide
      */
-    private void setGlobalSetting(String name, int value) {
+    protected void setGlobalSetting(String name, int value) {
         Settings.Global.putInt(mContext.getContentResolver(), name, value);
         if (name == Settings.Global.MULTI_SIM_DATA_CALL_SUBSCRIPTION) {
             invalidateDefaultDataSubIdCaches();

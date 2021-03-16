@@ -82,7 +82,7 @@ import android.widget.TextView;
 import com.android.internal.R;
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.telephony.GsmAlphabet.TextEncodingDetails;
-import com.android.internal.telephony.SmsUsageMonitor.SmsAuthorizationCallback;
+
 import com.android.internal.telephony.cdma.sms.UserData;
 import com.android.internal.telephony.uicc.UiccCard;
 import com.android.internal.telephony.uicc.UiccController;
@@ -1305,23 +1305,7 @@ public abstract class SMSDispatcher extends Handler {
             }
 
             for (SmsTracker tracker : trackers) {
-                if (mSmsDispatchersController.getUsageMonitor().isSmsAuthorizationEnabled()) {
-                    final SmsAuthorizationCallback callback = new SmsAuthorizationCallback() {
-                        @Override
-                        public void onAuthorizationResult(final boolean accepted) {
-                            if (accepted) {
-                                sendSms(tracker);
-                            } else {
-                                tracker.onFailed(mContext, RESULT_ERROR_GENERIC_FAILURE,
-                                        SmsUsageMonitor.ERROR_CODE_BLOCKED);
-                            }
-                        }
-                    };
-                   mSmsDispatchersController.getUsageMonitor().authorizeOutgoingSms(tracker.mAppInfo,
-                            tracker.mDestAddress,tracker.mFullMessageText, callback, this);
-                } else {
-                    sendSms(tracker);
-                }
+            sendSms(tracker);
             }
         }
 

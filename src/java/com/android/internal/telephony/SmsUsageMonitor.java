@@ -20,7 +20,6 @@ import android.compat.annotation.UnsupportedAppUsage;
 import android.content.ContentResolver;
 import android.content.Context;
 import android.content.pm.ApplicationInfo;
-import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager.NameNotFoundException;
 import android.content.res.XmlResourceParser;
 import android.database.ContentObserver;
@@ -77,8 +76,20 @@ public class SmsUsageMonitor {
     /** Default number of SMS sent in checking period without user permission. */
     private static final int DEFAULT_SMS_MAX_COUNT = 30;
 
-    /** Error code for SmsManager sent PendingIntent **/
-    static final int ERROR_CODE_BLOCKED = 191286;
+    /** Return value from {@link #checkDestination} for regular phone numbers. */
+    static final int CATEGORY_NOT_SHORT_CODE = 0;
+
+    /** Return value from {@link #checkDestination} for free (no cost) short codes. */
+    static final int CATEGORY_FREE_SHORT_CODE = 1;
+
+    /** Return value from {@link #checkDestination} for standard rate (non-premium) short codes. */
+    static final int CATEGORY_STANDARD_SHORT_CODE = 2;
+
+    /** Return value from {@link #checkDestination} for possible premium short codes. */
+    public static final int CATEGORY_POSSIBLE_PREMIUM_SHORT_CODE = 3;
+
+    /** Return value from {@link #checkDestination} for premium short codes. */
+    static final int CATEGORY_PREMIUM_SHORT_CODE = 4;
 
     /** @hide */
     public static int mergeShortCodeCategories(int type1, int type2) {
@@ -576,23 +587,6 @@ public class SmsUsageMonitor {
                 writePremiumSmsPolicyDb();
             }
         }).start();
-    }
-
-    public interface SmsAuthorizationCallback {
-        void onAuthorizationResult(boolean authorized);
-    }
-
-    public void authorizeOutgoingSms(final PackageInfo packageInfo,
-            final String destinationAddress,
-            final String message,
-            final SmsAuthorizationCallback callback,
-            final Handler callbackHandler) {
-        callback.onAuthorizationResult(true); // Default implementation always authorizes
-    }
-
-    public boolean isSmsAuthorizationEnabled() {
-        return mContext.getResources().getBoolean(
-                com.android.internal.R.bool.config_sms_authorization_enabled);
     }
 
     private void checkCallerIsSystemOrPhoneOrSameApp(String pkg) {

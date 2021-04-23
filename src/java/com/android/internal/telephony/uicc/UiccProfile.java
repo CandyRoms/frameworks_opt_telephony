@@ -618,10 +618,10 @@ public class UiccProfile extends IccCard {
                 } else {
                     if (VDBG) {
                         log("updateExternalState: setting state to READY; records loaded "
-                            + areReadyAppsRecordsLoaded() + ", carrier privilige rules loaded "
-                            + areCarrierPriviligeRulesLoaded());
+                                + areReadyAppsRecordsLoaded() + ", carrier privilige rules loaded "
+                                + areCarrierPriviligeRulesLoaded());
                     }
-                        setExternalState(IccCardConstants.State.READY);
+                    setExternalState(IccCardConstants.State.READY);
                 }
                 break;
         }
